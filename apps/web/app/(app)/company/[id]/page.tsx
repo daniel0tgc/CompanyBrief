@@ -7,8 +7,11 @@ export default async function CompanyPage({
   params: { id: string };
 }) {
   let company;
+  let expansionCards;
   try {
-    company = await getCompany(params.id);
+    const result = await getCompany(params.id);
+    company = result.company;
+    expansionCards = result.expansionCards;
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
       return (
@@ -49,9 +52,8 @@ export default async function CompanyPage({
         <AnalysisView
           companyId={company.id}
           token={token}
-          initialAnalysis={
-            company.status === "complete" ? company.analysis : null
-          }
+          initialAnalysis={company.status === "complete" ? company.analysis : null}
+          initialExpansionCards={expansionCards}
         />
       </div>
     </div>

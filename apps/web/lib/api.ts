@@ -66,8 +66,8 @@ export async function getMe(): Promise<MeResponse> {
   return apiClient<MeResponse>("/auth/me");
 }
 
-export type { CompanyListItem, Company } from "@/lib/types";
-import type { CompanyListItem, Company } from "@/lib/types";
+export type { CompanyListItem, Company, ExpansionCard } from "@/lib/types";
+import type { CompanyListItem, Company, ExpansionCard } from "@/lib/types";
 
 export async function getCompanies(): Promise<CompanyListItem[]> {
   const { companies } = await apiClient<{ companies: CompanyListItem[] }>(
@@ -76,11 +76,12 @@ export async function getCompanies(): Promise<CompanyListItem[]> {
   return companies;
 }
 
-export async function getCompany(id: string): Promise<Company> {
-  const { company } = await apiClient<{ company: Company }>(
+export async function getCompany(
+  id: string,
+): Promise<{ company: Company; expansionCards: ExpansionCard[] }> {
+  return apiClient<{ company: Company; expansionCards: ExpansionCard[] }>(
     `/companies/${id}`,
   );
-  return company;
 }
 
 export async function createCompany(

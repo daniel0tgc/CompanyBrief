@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { useAnalysisStream } from "@/lib/useAnalysisStream";
 import { AgentThinking } from "./AgentThinking";
 import { SectionCard } from "./SectionCard";
+import { ChatPanel } from "@/components/chat/ChatPanel";
 import type { CompanyAnalysis, ExpansionCard } from "@/lib/types";
 
 const SECTIONS: { key: keyof CompanyAnalysis; title: string; fullWidth?: boolean }[] = [
@@ -25,13 +27,16 @@ export function AnalysisView({
   companyId,
   token,
   initialAnalysis,
-  expansionCards = [],
+  initialExpansionCards = [],
 }: {
   companyId: string;
   token: string | null;
   initialAnalysis?: CompanyAnalysis | null;
-  expansionCards?: ExpansionCard[];
+  initialExpansionCards?: ExpansionCard[];
 }) {
+  const [expansionCards, setExpansionCards] =
+    useState<ExpansionCard[]>(initialExpansionCards);
+
   const { sections, thinking, isStreaming } = useAnalysisStream(
     initialAnalysis ? null : companyId,
     initialAnalysis ? null : token,
@@ -39,8 +44,12 @@ export function AnalysisView({
 
   const data: Partial<CompanyAnalysis> = initialAnalysis ?? sections;
 
+  function handleNewCard(card: ExpansionCard) {
+    setExpansionCards((prev) => [...prev, card]);
+  }
+
   return (
-    <div>
+    <div className="pb-24">
       <AgentThinking thinking={thinking} isStreaming={isStreaming} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -62,6 +71,10 @@ export function AnalysisView({
           );
         })}
       </div>
+
+      {initialAnalysis && (
+        <ChatPanel companyId={companyId} onNewCard={handleNewCard} />
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import authPlugin from "./plugins/auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { companiesRoutes } from "./routes/companies.js";
+import { chatRoutes } from "./routes/chat.js";
 import { startAnalysisWorker } from "./jobs/analysis.job.js";
 
 const PORT = Number(process.env.PORT) || 3001;
@@ -26,6 +27,7 @@ async function buildServer() {
 
   await app.register(authRoutes);
   await app.register(companiesRoutes);
+  await app.register(chatRoutes);
 
   startAnalysisWorker();
 

@@ -4,6 +4,7 @@ import { verifyNextAuthToken } from "../plugins/auth.js";
 import { companiesRepository } from "../db/repository/companies.js";
 import { analysisQueue } from "../lib/queue.js";
 import { subscribeToAnalysis } from "../lib/redis-pubsub.js";
+import { expansionCardsRepository } from "../db/repository/expansionCards.js";
 
 function slugify(name: string): string {
   return name
@@ -66,7 +67,8 @@ export async function companiesRoutes(app: FastifyInstance) {
       if (!company || company.userId !== request.user.id) {
         return reply.status(404).send({ error: "Not found" });
       }
-      return reply.send({ company });
+      const expansionCards = await expansionCardsRepository.findByCompanyId(id);
+      return reply.send({ company, expansionCards });
     },
   );
 
