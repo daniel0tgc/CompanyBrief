@@ -18,6 +18,8 @@ async function getRawToken(): Promise<string | null> {
   if (!session) return null;
   const cookieStore = cookies();
   const token =
+    cookieStore.get("authjs.session-token")?.value ??
+    cookieStore.get("__Secure-authjs.session-token")?.value ??
     cookieStore.get("next-auth.session-token")?.value ??
     cookieStore.get("__Secure-next-auth.session-token")?.value ??
     null;
