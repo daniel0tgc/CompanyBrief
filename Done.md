@@ -20,7 +20,7 @@
 **Last updated:** 2026-04-15
 **Web URL:** https://web-production-f5f8.up.railway.app
 **API URL:** https://api-production-7bed.up.railway.app
-**Current phase:** Phase 3 complete — Phase 4 next
+**Current phase:** Phase 4 complete — Phase 5 next
 **Start method:** Scaffold from scratch
 
 ---
@@ -43,7 +43,7 @@
 - [x] Phase 1: Monorepo scaffold + Railway deploy
 - [x] Phase 2: Google OAuth (NextAuth v5)
 - [x] Phase 3: Company CRUD + dashboard shell
-- [ ] Phase 4: Analysis agent (Anthropic tool use)
+- [x] Phase 4: Analysis agent (Anthropic tool use)
 - [ ] Phase 5: SSE streaming (Redis pub/sub → EventSource)
 - [ ] Phase 6: Analysis UI (section cards + agent thinking)
 - [ ] Phase 7: Chatbot + expansion cards
@@ -263,38 +263,62 @@ BullMQ queue name is `'analysis'`. Redis connection uses `maxRetriesPerRequest: 
 ---
 
 ### Phase 4 — Analysis Agent (Anthropic Tool Use)
-**Completed:** [DATE]
-**Status:** `[ ] Not started`
+**Completed:** 2026-04-15
+**Status:** `[x] Complete`
 
 #### Task Checkboxes
-- [ ] 4.1 — Tavily client
-- [ ] 4.2 — Scraper utility
-- [ ] 4.3 — Anthropic tool definitions
-- [ ] 4.4 — ANALYSIS_CONTEXT.md (agent system prompt)
-- [ ] 4.5 — Agent orchestrator
-- [ ] 4.6 — Replace stub job with real agent
+- [x] 4.1 — Tavily client
+- [x] 4.2 — Scraper utility
+- [x] 4.3 — Anthropic tool definitions
+- [x] 4.4 — ANALYSIS_CONTEXT.md (agent system prompt)
+- [x] 4.5 — Agent orchestrator
+- [x] 4.6 — Replace stub job with real agent
 
 #### Deviations
-- 4.1: [none | describe]
-- 4.2: [none | describe]
-- 4.3: [none | describe]
-- 4.4: [none | describe]
-- 4.5: [none | describe]
-- 4.6: [none | describe]
+- 4.1: none
+- 4.2: Used native `fetch` (Node 18+ built-in) instead of `node-fetch` — avoids extra dependency, functionally identical. `AbortSignal.timeout(10_000)` used for cheerio scrape timeout.
+- 4.3: none
+- 4.4: none
+- 4.5: Section failures are caught individually (per-section try/catch) so one tool failure doesn't abort the entire analysis — partial analysis is saved if most sections succeed. JSON extracted from response using indexOf/lastIndexOf to handle any preamble the model might add despite the output rule.
+- 4.6: Redis publish is inlined in `analysis.job.ts` using the existing `redis` singleton (not via `redis-pubsub.ts`) because Phase 5 creates that helper. The inline emit uses `.catch()` so a publish failure never crashes the job.
 
 #### Phase Summary
-[CURSOR WRITES THIS]
+The real analysis agent is live and wired into the BullMQ worker. `runAnalysisAgent` in `packages/api/src/lib/agent/index.ts` loads `ANALYSIS_CONTEXT.md` at startup (cached in module scope), iterates over all 13 sections in order, and for each section runs a multi-turn Anthropic tool-use loop until `stop_reason === 'end_turn'`. The three tools (`web_search`, `scrape_url`, `search_news`) call Tavily and cheerio respectively. Each tool call and result, each thinking text block, and each completed section emits an `AgentEvent` to Redis pub/sub channel `analysis:[companyId]`. `analysis.job.ts` stub was fully replaced — it sets status `running`, calls the agent, saves the result, and calls `updateError` on failure.
 
 #### Files Created
 ```
-[exact paths]
+packages/api/src/lib/tavily.ts
+packages/api/src/lib/scraper.ts
+packages/api/src/lib/agent/tools.ts
+packages/api/src/lib/agent/ANALYSIS_CONTEXT.md
+packages/api/src/lib/agent/index.ts
+```
+
+#### Files Modified
+```
+packages/api/src/jobs/analysis.job.ts   (stub replaced with real agent call)
+```
+
+#### Dependencies Added
+```
+packages/api: @anthropic-ai/sdk, cheerio
 ```
 
 #### Issues Encountered
-[CURSOR WRITES THIS — note any Tavily rate limits, Anthropic tool use edge cases, or scraping failures]
+None at build time. `tsc --noEmit` passed with zero errors in both packages. No linter errors. Live API verification pending real `ANTHROPIC_API_KEY` and `TAVILY_API_KEY` on Railway.
+
+#### Post-Phase Fix (2026-04-15)
+- **Bug:** NextAuth v5 beta.31 renamed session cookies from `next-auth.*` to `authjs.*`. `getRawToken()` in `apps/web/lib/api.ts` was checking only the old v4 names → returned null on every call → no Authorization header sent to Fastify → 401 on all authenticated routes → Application error on every page load.
+- **Fix:** Added `authjs.session-token` and `__Secure-authjs.session-token` as the primary lookups (v4 names kept as fallback). Deployed to Railway web service → SUCCESS.
+- **File modified:** `apps/web/lib/api.ts` — `getRawToken()` now checks all four cookie name variants.
 
 #### Notes for Claude Code
-[CURSOR WRITES THIS — note average analysis time, any sections that consistently fail, tool call patterns observed]
+- `ANTHROPIC_API_KEY` and `TAVILY_API_KEY` must be set in Railway api service env before Phase 4 agent runs in production — they were empty strings from Phase 1.
+- Redis pub/sub publish is inline in `analysis.job.ts` using the existing `redis` singleton; Phase 5 task 5.1 extracts this into `redis-pubsub.ts` and adds the subscribe side.
+- The `emit` function signature (`AgentEvent`) is exported from `agent/index.ts` — both the job and the future SSE route import it from there.
+- Agent runs section-by-section; each section is one `messages.create` call with its own conversation. This keeps context windows small but means the model doesn't cross-reference sections automatically.
+- `tavilyExtract` is the fallback when cheerio returns < 200 chars or the fetch fails. If Tavily rate-limits, the tool catches and returns the error string as the result content — the agent will note it in output rather than crashing.
+- Average analysis time will depend on Anthropic latency × 13 sections × tool calls per section. Expect 60–120s per company.
 
 ---
 
@@ -474,14 +498,14 @@ MODULES:
 │   │       ├── companies.ts  [Phase 3] create, findById, findAllByUser, updateStatus, updateError, deleteById
 │   │       └── conversations.ts [not started]
 │   ├── jobs/
-│   │   └── analysis.job.ts   [Phase 3] stub worker: running→2s→complete with placeholder
+│   │   └── analysis.job.ts   [Phase 4] real agent: running→runAnalysisAgent→complete|error
 │   └── lib/
 │       ├── agent/
-│       │   ├── index.ts      [not started]
-│       │   ├── tools.ts      [not started]
-│       │   └── ANALYSIS_CONTEXT.md [not started]
-│       ├── tavily.ts         [not started]
-│       ├── scraper.ts        [not started]
+│       │   ├── index.ts      [Phase 4] orchestrator: 13-section loop, tool-use loop, emit
+│       │   ├── tools.ts      [Phase 4] web_search, scrape_url, search_news tool defs
+│       │   └── ANALYSIS_CONTEXT.md [Phase 4] agent system prompt (loaded at startup)
+│       ├── tavily.ts         [Phase 4] tavilySearch, tavilyNewsSearch, tavilyExtract
+│       ├── scraper.ts        [Phase 4] cheerio scraper + Tavily fallback
 │       ├── redis-pubsub.ts   [not started]
 │       ├── queue.ts          [Phase 3] BullMQ Queue 'analysis'
 │       ├── redis.ts          [Phase 3] ioredis client

@@ -596,10 +596,56 @@ NextAuth v5 (beta) specific:
 
 ---
 
+---
+
+### E-20: NextAuth v5 cookie rename breaks all server-side token reads
+**Phase:** 4 (discovered in production) | **Severity:** Critical — caused 401 on every authenticated API call; app completely non-functional after login
+
+**What happened:** After login succeeded, every server-side call to the Fastify API returned 401 Unauthorized. The dashboard page, landing page server action, and company page all crashed with `ApiError: Unauthorized`. The `getRawToken()` helper in `apps/web/lib/api.ts` looked for cookies named `next-auth.session-token` and `__Secure-next-auth.session-token`. NextAuth v5 beta.31 silently renamed these to `authjs.session-token` and `__Secure-authjs.session-token`. The lookup returned `null` on every call, so no `Authorization: Bearer` header was ever sent to Fastify.
+
+**Diagnosis path:** The error appeared as a generic Next.js "Application error" (500) in the browser. `railway logs --service web` revealed `ApiError: Unauthorized` originating from `(app)/dashboard/page.js`. Cross-referencing with the Fastify API logs (which showed zero requests from the web service) confirmed the token was never being sent — not that Fastify was rejecting it.
+
+**Root cause — Context.md:** Task 2.8 specifies reading the raw token from `next-auth.session-token`. This was correct for NextAuth v4 and early v5 betas, but is not version-pinned and has no warning about the cookie rename that occurred in v5 beta.25+.
+
+**Root cause — CursorRules.md:** Section 4 (Auth Rules) documents the cookie pattern as `cookies().get('next-auth.session-token')?.value` but does not note that NextAuth v5 uses `authjs.*` cookie names, nor does it flag this as version-sensitive.
+
+**Root cause — general:** `NEXT_PUBLIC_*` env vars, NEXTAUTH_SECRET, CORS, and API URLs were all verified first — the cookie name mismatch is non-obvious because sign-in appears to work (NextAuth handles its own cookie read/write correctly) while server-side token forwarding silently fails.
+
+**Fixes:**
+
+- **Context.md Task 2.8:** Replace the cookie lookup pattern with a version-safe variant that checks all four names:
+  ```ts
+  const token =
+    cookieStore.get("authjs.session-token")?.value ??          // NextAuth v5
+    cookieStore.get("__Secure-authjs.session-token")?.value ?? // NextAuth v5 HTTPS
+    cookieStore.get("next-auth.session-token")?.value ??       // NextAuth v4 fallback
+    cookieStore.get("__Secure-next-auth.session-token")?.value ??
+    null;
+  ```
+  Add a comment: `// NextAuth v5 uses authjs.* names; v4 used next-auth.* names — check both`
+
+- **Context.md Task 2.8:** Add a verification step: after implementing, hit `GET /auth/me` from a server component and confirm it returns 200 (not 401) before marking the task complete. A 401 here means the cookie lookup is failing.
+
+- **CursorRules.md Section 4 (Auth Rules):** Add the following warning block:
+  > **Cookie name version sensitivity:** NextAuth v4 uses `next-auth.session-token`; NextAuth v5 uses `authjs.session-token`. Always check both in `getRawToken()`. Never hardcode only one variant. If all auth env vars are correct but every API call returns 401 and Fastify logs show zero incoming requests, the cookie lookup is the first thing to check — not the secret, not CORS.
+
+- **CursorRules.md Section 8 (Verification Checklist):** Add item:
+  > `[ ]` After implementing the API client (Task 2.8): make one authenticated server-side call (`GET /auth/me`) and confirm the Fastify API log shows an incoming request. If no request appears in the API log, `getRawToken()` is returning null.
+
+- **Done.md Phase 2 template:** Add a "Post-deploy smoke test" row: "Hit `GET /auth/me` from a server component while logged in → confirm 200 and that Fastify API log shows the inbound request."
+
+**For future projects using NextAuth + a separate API:**
+- Pin the exact `next-auth` beta version in `package.json` (not `beta` floating tag) so cookie names don't shift on reinstall
+- Add an explicit server-side auth smoke test as part of Phase 2 acceptance criteria — not just "sign-in works" but "authenticated API call from server component returns 200"
+- If you ever see "login works but everything after is 401", check the API service logs first: if no requests are appearing, the issue is token forwarding (cookie name, missing env var for API URL, etc.), not token verification
+
+---
+
 ## Part 4 — Priority Order for Fixes
 
 | Priority | Issue | Impact |
 |---|---|---|
+| 🔴 Critical | E-20 + cookie name spec | App fully non-functional after login; hard to diagnose |
 | 🔴 Critical | E-10, E-17 + Platform section | Prevented production deploys for hours |
 | 🔴 Critical | E-14 + healthcheck spec | 5 failed deploys |
 | 🔴 Critical | E-15 + build verification rule | Masked actual errors, caused debug loops |

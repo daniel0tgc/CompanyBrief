@@ -1,24 +1,18 @@
 import { Worker } from "bullmq";
 import { redis } from "../lib/redis.js";
 import { companiesRepository } from "../db/repository/companies.js";
-import type { CompanyAnalysis } from "../lib/types.js";
+import { runAnalysisAgent, type AgentEvent } from "../lib/agent/index.js";
 
-const PLACEHOLDER_ANALYSIS: CompanyAnalysis = {
-  tagline: "Stub analysis — real agent runs in Phase 4.",
-  what_they_do: ["Placeholder bullet"],
-  problem_solved: ["Placeholder bullet"],
-  ai_angle: ["Placeholder bullet"],
-  competitive_position: ["Placeholder bullet"],
-  competitors: [{ name: "Competitor A", notes: "Placeholder notes." }],
-  customers: [{ category: "Enterprise", examples: ["Acme Corp"] }],
-  market_attractiveness: ["Placeholder bullet"],
-  disruption_risks: ["Placeholder bullet"],
-  future_outlook: ["Placeholder bullet"],
-  bull_case: "Placeholder bull case.",
-  bear_case: "Placeholder bear case.",
-  feedback: { pros: ["Fast"], cons: ["Expensive"], source_url: "" },
-  doc_url: "",
-};
+function makeEmitter(companyId: string) {
+  return function emit(event: AgentEvent): void {
+    const channel = `analysis:${companyId}`;
+    redis
+      .publish(channel, JSON.stringify(event))
+      .catch((err: unknown) =>
+        console.error(`[analysis.job] publish error on ${channel}:`, err),
+      );
+  };
+}
 
 export function startAnalysisWorker() {
   const worker = new Worker(
@@ -29,19 +23,22 @@ export function startAnalysisWorker() {
         companyName: string;
       };
 
-      console.log(`Starting analysis for ${companyName}`);
+      console.log(`[analysis.job] Starting agent for "${companyName}" (${companyId})`);
 
       await companiesRepository.updateStatus(companyId, "running");
 
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const emit = makeEmitter(companyId);
 
-      await companiesRepository.updateStatus(
-        companyId,
-        "complete",
-        PLACEHOLDER_ANALYSIS,
-      );
-
-      console.log(`Analysis complete for ${companyName}`);
+      try {
+        const analysis = await runAnalysisAgent(companyName, companyId, emit);
+        await companiesRepository.updateStatus(companyId, "complete", analysis);
+        console.log(`[analysis.job] Agent complete for "${companyName}" (${companyId})`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[analysis.job] Agent failed for "${companyName}":`, message);
+        emit({ type: "error", payload: { message } });
+        await companiesRepository.updateError(companyId, message);
+      }
     },
     { connection: redis },
   );
@@ -49,9 +46,11 @@ export function startAnalysisWorker() {
   worker.on("failed", async (job, err) => {
     if (job) {
       const { companyId } = job.data as { companyId: string };
-      await companiesRepository.updateError(companyId, err.message);
+      await companiesRepository
+        .updateError(companyId, err.message)
+        .catch(() => {});
     }
-    console.error("Analysis job failed:", err);
+    console.error("[analysis.job] BullMQ job failed:", err);
   });
 
   return worker;

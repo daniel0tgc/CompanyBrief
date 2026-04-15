@@ -5,17 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/lib/agent && cp src/lib/agent/ANALYSIS_CONTEXT.md dist/lib/agent/",
     "start": "node dist/server.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/fixtures/seed.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.89.0",
     "@fastify/cors": "^10.0.2",
     "@fastify/jwt": "^9.0.4",
     "@fastify/rate-limit": "^10.2.0",
     "bullmq": "^5.74.0",
+    "cheerio": "^1.2.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.4",
     "fastify": "^5.2.1",
