@@ -3,6 +3,7 @@ import { z } from "zod";
 import { verifyNextAuthToken } from "../plugins/auth.js";
 import { companiesRepository } from "../db/repository/companies.js";
 import { analysisQueue } from "../lib/queue.js";
+import { subscribeToAnalysis } from "../lib/redis-pubsub.js";
 
 function slugify(name: string): string {
   return name
@@ -80,6 +81,52 @@ export async function companiesRoutes(app: FastifyInstance) {
       }
       await companiesRepository.deleteById(id);
       return reply.status(204).send();
+    },
+  );
+
+  app.get(
+    "/companies/:id/stream",
+    { preHandler: [verifyNextAuthToken] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const company = await companiesRepository.findById(id);
+      if (!company || company.userId !== request.user.id) {
+        return reply.status(404).send({ error: "Not found" });
+      }
+
+      reply.hijack();
+      const raw = reply.raw;
+      raw.setHeader("Content-Type", "text/event-stream");
+      raw.setHeader("Cache-Control", "no-cache");
+      raw.setHeader("Connection", "keep-alive");
+      raw.setHeader("X-Accel-Buffering", "no");
+
+      function send(event: unknown): void {
+        if (!raw.destroyed) {
+          raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
+      }
+
+      if (company.status === "complete") {
+        send({ type: "replay", payload: company.analysis });
+        raw.end();
+        return;
+      }
+
+      if (company.status === "error") {
+        send({ type: "error", payload: { message: company.errorMessage } });
+        raw.end();
+        return;
+      }
+
+      const unsub = await subscribeToAnalysis(id, (event) => send(event));
+
+      await new Promise<void>((resolve) => {
+        request.raw.on("close", () => {
+          unsub().catch(console.error);
+          resolve();
+        });
+      });
     },
   );
 }

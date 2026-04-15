@@ -2,15 +2,13 @@ import { Worker } from "bullmq";
 import { redis } from "../lib/redis.js";
 import { companiesRepository } from "../db/repository/companies.js";
 import { runAnalysisAgent, type AgentEvent } from "../lib/agent/index.js";
+import { publishAgentEvent } from "../lib/redis-pubsub.js";
 
 function makeEmitter(companyId: string) {
   return function emit(event: AgentEvent): void {
-    const channel = `analysis:${companyId}`;
-    redis
-      .publish(channel, JSON.stringify(event))
-      .catch((err: unknown) =>
-        console.error(`[analysis.job] publish error on ${channel}:`, err),
-      );
+    publishAgentEvent(companyId, event).catch((err: unknown) =>
+      console.error(`[analysis.job] publish error for ${companyId}:`, err),
+    );
   };
 }
 
