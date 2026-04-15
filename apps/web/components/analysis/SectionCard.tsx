@@ -121,7 +121,7 @@ export function SectionCard({
   if (isLoading) return <SectionCardSkeleton />;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+    <div data-section={sectionKey} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
       <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-4">
         {title}
       </h3>
