@@ -1,7 +1,12 @@
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import fp from "fastify-plugin";
-import { jwtDecrypt } from "jose";
-import { createHash } from "crypto";
+import {
+  jwtDecrypt,
+  calculateJwkThumbprint,
+  base64url,
+  type JWEHeaderParameters,
+} from "jose";
+import { hkdfSync } from "crypto";
 import { usersRepository } from "../db/repository/users.js";
 
 type ReqUser = { id: string; email: string };
@@ -12,9 +17,25 @@ declare module "fastify" {
   }
 }
 
-function deriveKey(secret: string): Uint8Array {
+// All possible Auth.js v5 session cookie names (production HTTPS first, then HTTP dev)
+const SESSION_COOKIE_SALTS = [
+  "__Secure-authjs.session-token",
+  "authjs.session-token",
+  "__Secure-next-auth.session-token",
+  "next-auth.session-token",
+];
+
+// Replicates Auth.js v5 getDerivedEncryptionKey — HKDF-SHA-256 with cookie name as salt
+function deriveKey(enc: string, secret: string, salt: string): Uint8Array {
+  const length = enc === "A256CBC-HS512" ? 64 : 32;
   return new Uint8Array(
-    createHash("sha256").update(secret).digest(),
+    hkdfSync(
+      "sha256",
+      secret,
+      salt,
+      `Auth.js Generated Encryption Key (${salt})`,
+      length,
+    ),
   );
 }
 
@@ -23,8 +44,29 @@ async function decodeNextAuthToken(
   secret: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    const key = deriveKey(secret);
-    const { payload } = await jwtDecrypt(rawToken, key);
+    const { payload } = await jwtDecrypt(
+      rawToken,
+      async (header: JWEHeaderParameters) => {
+        const enc = (header.enc as string) ?? "A256CBC-HS512";
+        for (const salt of SESSION_COOKIE_SALTS) {
+          const key = deriveKey(enc, secret, salt);
+          if (!header.kid) return key;
+          // 64-byte key → sha512, 32-byte key → sha256
+          const hashAlg = key.byteLength === 64 ? "sha512" : "sha256";
+          const thumbprint = await calculateJwkThumbprint(
+            { kty: "oct", k: base64url.encode(key) },
+            hashAlg,
+          );
+          if (header.kid === thumbprint) return key;
+        }
+        throw new Error("no matching decryption secret");
+      },
+      {
+        clockTolerance: 15,
+        keyManagementAlgorithms: ["dir"],
+        contentEncryptionAlgorithms: ["A256CBC-HS512", "A256GCM"],
+      },
+    );
     return payload as Record<string, unknown>;
   } catch {
     return null;
