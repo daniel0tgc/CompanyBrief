@@ -13,7 +13,7 @@ export class ApiError extends Error {
   }
 }
 
-async function getRawToken(): Promise<string | null> {
+export async function getRawToken(): Promise<string | null> {
   const session = await auth();
   if (!session) return null;
   const cookieStore = cookies();

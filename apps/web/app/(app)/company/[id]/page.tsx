@@ -1,5 +1,5 @@
-import { getCompany } from "@/lib/api";
-import { ApiError } from "@/lib/api";
+import { getCompany, getRawToken, ApiError } from "@/lib/api";
+import { AnalysisView } from "@/components/analysis/AnalysisView";
 
 export default async function CompanyPage({
   params,
@@ -22,34 +22,38 @@ export default async function CompanyPage({
     throw err;
   }
 
+  if (company.status === "error") {
+    return (
+      <div className="p-8">
+        <h1 className="text-2xl font-semibold text-gray-900">{company.name}</h1>
+        <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-6">
+          <p className="text-sm font-medium text-red-700">Analysis failed</p>
+          <p className="text-sm text-red-600 mt-1">
+            {company.errorMessage ?? "An unexpected error occurred."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const token = await getRawToken();
+
   return (
     <div className="p-8">
       <h1 className="text-2xl font-semibold text-gray-900">{company.name}</h1>
-      {company.status === "pending" && (
-        <p className="text-sm text-yellow-600 mt-2">
-          Analysis queued — starting soon…
-        </p>
+      {company.analysis?.tagline && (
+        <p className="text-base text-gray-500 mt-1">{company.analysis.tagline}</p>
       )}
-      {company.status === "running" && (
-        <p className="text-sm text-blue-600 mt-2 animate-pulse">
-          Analysis running…
-        </p>
-      )}
-      {company.status === "error" && (
-        <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4">
-          <p className="text-red-700 text-sm">
-            {company.errorMessage ?? "Analysis failed."}
-          </p>
-        </div>
-      )}
-      {company.status === "complete" && company.analysis && (
-        <p className="text-sm text-gray-500 mt-2">
-          {company.analysis.tagline}
-        </p>
-      )}
-      <p className="text-xs text-gray-400 mt-6">
-        Full analysis UI coming in Phase 6.
-      </p>
+
+      <div className="mt-6">
+        <AnalysisView
+          companyId={company.id}
+          token={token}
+          initialAnalysis={
+            company.status === "complete" ? company.analysis : null
+          }
+        />
+      </div>
     </div>
   );
 }
