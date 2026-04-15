@@ -1,4 +1,3 @@
-import { auth } from "@/lib/auth";
 import { cookies } from "next/headers";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
@@ -14,8 +13,6 @@ export class ApiError extends Error {
 }
 
 export async function getRawToken(): Promise<string | null> {
-  const session = await auth();
-  if (!session) return null;
   const cookieStore = cookies();
   const token =
     cookieStore.get("authjs.session-token")?.value ??

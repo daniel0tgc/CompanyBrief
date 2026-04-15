@@ -13,16 +13,30 @@ export default async function CompanyPage({
     company = result.company;
     expansionCards = result.expansionCards;
   } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return (
-        <div className="p-8">
-          <div className="bg-red-50 border border-red-200 rounded-xl p-6">
-            <p className="text-red-700 font-medium">Company not found.</p>
-          </div>
+    const status = err instanceof ApiError ? err.status : 0;
+    const message =
+      err instanceof ApiError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "An unexpected error occurred.";
+
+    return (
+      <div className="p-8">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+          <p className="text-red-700 font-medium">
+            {status === 404 ? "Company not found." : "Failed to load company."}
+          </p>
+          <p className="text-sm text-red-600 mt-1">{message}</p>
+          <a
+            href="/dashboard"
+            className="mt-4 inline-block text-sm text-blue-600 hover:underline"
+          >
+            ← Back to dashboard
+          </a>
         </div>
-      );
-    }
-    throw err;
+      </div>
+    );
   }
 
   if (company.status === "error") {
