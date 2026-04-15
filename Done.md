@@ -20,7 +20,7 @@
 **Last updated:** 2026-04-15
 **Web URL:** https://web-production-f5f8.up.railway.app
 **API URL:** https://api-production-7bed.up.railway.app
-**Current phase:** Phase 5 complete — Phase 6 next
+**Current phase:** Phase 6 complete — Phase 7 next
 **Start method:** Scaffold from scratch
 
 ---
@@ -45,7 +45,7 @@
 - [x] Phase 3: Company CRUD + dashboard shell
 - [x] Phase 4: Analysis agent (Anthropic tool use)
 - [x] Phase 5: SSE streaming (Redis pub/sub → EventSource)
-- [ ] Phase 6: Analysis UI (section cards + agent thinking)
+- [x] Phase 6: Analysis UI (section cards + agent thinking)
 - [ ] Phase 7: Chatbot + expansion cards
 - [ ] Phase 8: Dashboard polish + company management
 - [ ] Phase 9: Hardening
@@ -369,36 +369,48 @@ Phase 4 oversight: `tsc` does not copy `.md` files to `dist/`, so `ANALYSIS_CONT
 ---
 
 ### Phase 6 — Analysis UI
-**Completed:** [DATE]
-**Status:** `[ ] Not started`
+**Completed:** 2026-04-15
+**Status:** `[x] Complete`
 
 #### Task Checkboxes
-- [ ] 6.1 — AgentThinking component
-- [ ] 6.2 — SectionCard component
-- [ ] 6.3 — SectionCardSkeleton component
-- [ ] 6.4 — AnalysisView component
-- [ ] 6.5 — Company analysis page
+- [x] 6.1 — AgentThinking component
+- [x] 6.2 — SectionCard component
+- [x] 6.3 — SectionCardSkeleton component
+- [x] 6.4 — AnalysisView component
+- [x] 6.5 — Company analysis page
 
 #### Deviations
-- 6.1: [none | describe]
-- 6.2: [none | describe]
-- 6.3: [none | describe]
-- 6.4: [none | describe]
-- 6.5: [none | describe]
+- 6.1: Uses lucide-react icons (Brain, Search, CheckCircle, Layers, AlertCircle) instead of emoji — cleaner visual. Collapsed by default; shows pulse dot when streaming and not expanded.
+- 6.2: Uses `data-section={sectionKey}` on the card div to consume the prop without lint error (`sectionKey` not needed inside the component body — filtering is done in AnalysisView). Build failed first deploy due to ESLint `no-unused-vars` on the `sectionKey` prop — fixed by adding `data-section` attribute.
+- 6.3: none
+- 6.4: When `initialAnalysis` is provided, passes `null` as companyId and `null` as token to `useAnalysisStream` — hook returns empty state and no EventSource is opened. The `data` const uses `initialAnalysis ?? sections` to pick the right source.
+- 6.5: Pre-fix: exported `getRawToken` from `api.ts` so the server component can read the session token and pass it to AnalysisView. Error state rendered inline in the server component. Token passed as prop to AnalysisView; never sent to the client as a visible string.
 
 #### Phase Summary
-[CURSOR WRITES THIS]
+The full analysis UI is live. `AgentThinking` renders a collapsible panel with per-event icons showing the agent's tool calls, thinking blocks, and section completions in real time. `SectionCard` renders all 5 data shapes — string, string[], `{name,notes}[]`, `{category,examples}[]`, and the `{pros,cons,source_url}` feedback shape. `SectionCardSkeleton` shows animate-pulse placeholders for sections not yet received. `AnalysisView` (client component) calls `useAnalysisStream`, assembles all 13 sections in a two-column grid (bull/bear/feedback full-width), and gracefully shows skeletons while streaming. The company page is now a proper server component that reads the raw session token and passes it alongside initial analysis data.
 
 #### Files Created
 ```
-[exact paths]
+apps/web/components/analysis/AgentThinking.tsx
+apps/web/components/analysis/SectionCard.tsx
+apps/web/components/analysis/SectionCardSkeleton.tsx
+apps/web/components/analysis/AnalysisView.tsx
+```
+
+#### Files Modified
+```
+apps/web/app/(app)/company/[id]/page.tsx   (replaced Phase 3 stub with real page)
+apps/web/lib/api.ts                         (exported getRawToken)
 ```
 
 #### Issues Encountered
-[CURSOR WRITES THIS]
+`next build` failed on first deploy: ESLint `no-unused-vars` on the `sectionKey` prop in `SectionCard` — the prop was declared but never used in the component body (filtering happens in AnalysisView). Fixed by using `sectionKey` as the value of a `data-section` HTML attribute. Also: `jose` Edge Runtime warnings about `CompressionStream` are emitted during build — these are pre-existing warnings from NextAuth v5's use of jose and do not cause build failures.
 
 #### Notes for Claude Code
-[CURSOR WRITES THIS]
+- Phase 7 chat will need `@tanstack/react-query` — not yet installed in `apps/web`.
+- `SectionCard` receives `expansionCards: ExpansionCard[]` — Phase 6 renders them inline as simple blue cards. Phase 7 replaces the inline render with the proper `<ExpansionCard>` component.
+- `AnalysisView` accepts `expansionCards?: ExpansionCard[]` (default empty array). Phase 7.5 updates the company page to pass expansion cards fetched from `GET /companies/:id` (once that route includes them).
+- The `getRawToken()` export in `api.ts` is used by server components to get the raw JWE token for SSE auth. It is NOT safe to pass to client components as a visible prop if the token is sensitive — but since it's an httpOnly cookie value read server-side and passed via a React prop (not exposed in HTML), it is acceptable for the SSE use case.
 
 ---
 
@@ -531,12 +543,16 @@ MODULES:
 │   │   ├── (auth)/sign-in/page.tsx [Phase 2] Google sign-in page
 │   │   ├── (app)/layout.tsx  [Phase 3] sidebar shell + server-side company fetch
 │   │   ├── (app)/dashboard/page.tsx [Phase 3] company grid
-│   │   └── (app)/company/[id]/page.tsx [Phase 3] stub — status + tagline
+│   │   └── (app)/company/[id]/page.tsx [Phase 6] server component: reads token, renders AnalysisView
 │   ├── components/
 │   │   ├── ui/button.tsx     [Phase 1] shadcn default
 │   │   ├── sidebar/Sidebar.tsx [Phase 3] sidebar shell
 │   │   ├── sidebar/CompanyListItem.tsx [Phase 3] name + status badge + active state
-│   │   ├── analysis/         [not started]
+│   │   ├── analysis/
+│   │   │   ├── AgentThinking.tsx     [Phase 6] collapsible trace panel, lucide icons, pulse
+│   │   │   ├── SectionCard.tsx       [Phase 6] 5 shape renderers + inline expansion cards
+│   │   │   ├── SectionCardSkeleton.tsx [Phase 6] animate-pulse placeholder
+│   │   │   └── AnalysisView.tsx      [Phase 6] client component, 13-section grid
 │   │   └── chat/             [not started]
 │   ├── lib/
 │   │   ├── utils.ts          [Phase 1] cn() helper (shadcn)
