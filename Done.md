@@ -20,7 +20,7 @@
 **Last updated:** 2026-04-15
 **Web URL:** https://web-production-f5f8.up.railway.app
 **API URL:** https://api-production-7bed.up.railway.app
-**Current phase:** Phase 6 complete — Phase 7 next
+**Current phase:** Phase 7 complete — Phase 8 next
 **Start method:** Scaffold from scratch
 
 ---
@@ -46,7 +46,7 @@
 - [x] Phase 4: Analysis agent (Anthropic tool use)
 - [x] Phase 5: SSE streaming (Redis pub/sub → EventSource)
 - [x] Phase 6: Analysis UI (section cards + agent thinking)
-- [ ] Phase 7: Chatbot + expansion cards
+- [x] Phase 7: Chatbot + expansion cards
 - [ ] Phase 8: Dashboard polish + company management
 - [ ] Phase 9: Hardening
 
@@ -415,36 +415,54 @@ apps/web/lib/api.ts                         (exported getRawToken)
 ---
 
 ### Phase 7 — Chatbot + Expansion Cards
-**Completed:** [DATE]
-**Status:** `[ ] Not started`
+**Completed:** 2026-04-15
+**Status:** `[x] Complete`
 
 #### Task Checkboxes
-- [ ] 7.1 — Conversations repository
-- [ ] 7.2 — Chat route
-- [ ] 7.3 — ExpansionCard component
-- [ ] 7.4 — ChatPanel component
-- [ ] 7.5 — Wire expansion cards into SectionCard
+- [x] 7.1 — Conversations repository
+- [x] 7.2 — Chat route
+- [x] 7.3 — ExpansionCard component
+- [x] 7.4 — ChatPanel component
+- [x] 7.5 — Wire expansion cards into SectionCard
 
 #### Deviations
-- 7.1: [none | describe]
-- 7.2: [none | describe]
-- 7.3: [none | describe]
-- 7.4: [none | describe]
-- 7.5: [none | describe]
+- 7.1: Added `expansionCards.ts` repository alongside `conversations.ts` (not in spec as separate task — required for `findByCompanyId` in the companies route and chat route).
+- 7.2: Anthropic call is inline in the route handler per Context.md spec (deviation from CursorRules "no blocking Anthropic calls in route handlers"). Context.md explicitly specifies this pattern for the chat route — single Q&A turn, not a long-running agent.
+- 7.3: none
+- 7.4: ChatPanel uses a server action (`lib/actions.ts`) instead of calling Fastify directly — client components cannot read httpOnly cookies, so the token must be forwarded server-side via a server action. `useMutation` wraps the server action call.
+- 7.5: `GET /companies/:id` now returns `{ company, expansionCards }`. `getCompany()` in `api.ts` returns both. AnalysisView manages expansion cards in local state (initialized from server props, grown by ChatPanel callbacks). ChatPanel is only rendered when `initialAnalysis` is provided (analysis complete).
 
 #### Phase Summary
-[CURSOR WRITES THIS]
+Chat is live. `POST /companies/:id/chat` takes a question, calls Anthropic with the full analysis JSON as context, extracts `{ section_key, answer }` from the response, inserts an expansion card row, upserts the conversation messages, and returns `{ expansionCard, message }`. Expansion cards are fetched server-side with the company and passed as `initialExpansionCards` to AnalysisView. New cards from chat appear immediately via state update. ChatPanel shows a spinner while pending and disables input. Server action in `lib/actions.ts` proxies the request to Fastify (reads httpOnly cookie server-side).
 
 #### Files Created
 ```
-[exact paths]
+packages/api/src/db/repository/conversations.ts
+packages/api/src/db/repository/expansionCards.ts
+packages/api/src/routes/chat.ts
+apps/web/components/chat/ExpansionCard.tsx
+apps/web/components/chat/ChatPanel.tsx
+apps/web/components/providers/QueryProvider.tsx
+apps/web/lib/actions.ts
+```
+
+#### Files Modified
+```
+packages/api/src/routes/companies.ts   (GET /companies/:id includes expansionCards)
+packages/api/src/server.ts             (registered chatRoutes)
+apps/web/components/analysis/AnalysisView.tsx  (expansion card state + ChatPanel)
+apps/web/app/(app)/company/[id]/page.tsx       (destructures { company, expansionCards })
+apps/web/app/layout.tsx                        (QueryProvider wrapper)
+apps/web/lib/api.ts                            (getCompany returns { company, expansionCards })
 ```
 
 #### Issues Encountered
-[CURSOR WRITES THIS]
+TypeScript error on `ExpansionCard` type in `api.ts` — not imported before use in the `getCompany` return type. Fixed by adding `ExpansionCard` to the type re-export line. Both services deployed SUCCESS on first attempt.
 
 #### Notes for Claude Code
-[CURSOR WRITES THIS]
+- CursorRules says "no blocking Anthropic calls in route handlers" but Context.md explicitly specifies the chat route calls Anthropic directly. This is intentional — the chat is a single fast Q&A turn, not a long agent run.
+- `lib/actions.ts` uses file-level `"use server"` — valid because it exports only server actions, no React components.
+- Phase 8 needs: re-analyze endpoint, delete/re-analyze buttons, empty states, sidebar search.
 
 ---
 
