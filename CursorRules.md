@@ -71,6 +71,14 @@ Do not loop. Do not rewrite the same approach three times.
 - Never accumulate TypeScript errors — fix each before moving on
 - If a task takes more than 3 attempts, output BLOCKED
 
+**After every `railway up`:**
+1. Verify deployment status is SUCCESS before proceeding — Railway silently rolls back to
+   the last successful image when a build fails; the service stays up showing OLD code
+2. If status is FAILED: read BUILD logs (`railway service logs --build`), NOT runtime logs —
+   runtime logs show the old container's output, not the new build's compiler error
+3. Confirm new code is live by hitting an endpoint that only exists in this phase's code
+4. If the same build fails 3 times → output BLOCKED with the exact compiler error
+
 ---
 
 ## 3. Universal Code Rules
@@ -88,6 +96,11 @@ Do not loop. Do not rewrite the same approach three times.
 ❌ Skipping error handling on fetch/async calls
 ❌ Skipping Zod validation on any API route input or output
 ❌ Storing sensitive data in localStorage — httpOnly cookies only
+❌ File-level "use server" directive in any file that also exports a React component —
+   use inline "use server" inside the action function body only; file-level marks ALL
+   exports as server actions and sync components will break the build
+❌ Using @latest for CLI tools (shadcn, create-next-app, etc.) when the plan pins a
+   specific framework version — always pin the CLI tool version to match
 ```
 
 ### Always do
@@ -108,14 +121,26 @@ Do not loop. Do not rewrite the same approach three times.
 ## 4. Auth Rules (NextAuth v5 + Fastify JWT)
 
 - Auth is NextAuth v5 (Auth.js) with Google provider only — no email/password, no other providers
-- NextAuth session stored as a signed JWT in an httpOnly cookie (`next-auth.session-token`)
-- `NEXTAUTH_SECRET` is shared between Next.js and Fastify — never hardcoded
-- Fastify middleware verifies the NextAuth JWT using `NEXTAUTH_SECRET` on every protected route
+- `NEXTAUTH_SECRET` / `AUTH_SECRET` is shared between Next.js and Fastify — never hardcoded
 - After verification, Fastify extracts `userId` from the token and attaches it to `req.user`
-- Next.js server components call Fastify with `Authorization: Bearer <nextauth_token>` — the token is retrieved server-side via `auth()` from NextAuth
 - Client components never have direct access to the session token — they use server actions or server component props
 - `middleware.ts` in Next.js protects all routes under `/(app)/` — unauthenticated → `/sign-in`
 - `GET /auth/me` on Fastify returns the current user object — Next.js server components call this to hydrate user state
+
+**NextAuth v5 specifics (differs from v4 — do not revert these):**
+- Session token is **JWE-encrypted** (not signed) — stored in `next-auth.session-token` cookie
+- Fastify MUST verify using `jose` `jwtDecrypt` with key = `SHA-256(NEXTAUTH_SECRET)` — NOT `jsonwebtoken` (which only handles signed JWTs, not JWE)
+- `auth()` returns a **Session object**, NOT the raw token. To pass the token to Fastify:
+  ```ts
+  import { cookies } from 'next/headers'
+  const token = cookies().get('next-auth.session-token')?.value
+              ?? cookies().get('__Secure-next-auth.session-token')?.value
+  ```
+- `trustHost: true` MUST be set in the NextAuth config for any non-localhost deployment (Railway, Vercel, etc.). Without it, all auth routes throw `UntrustedHost` errors.
+- Also set `AUTH_TRUST_HOST=1` as a Railway env var on the web service as belt-and-suspenders.
+- Register Google OAuth redirect URIs in Google Cloud Console BEFORE testing the OAuth flow:
+  - `http://localhost:3000/api/auth/callback/google`
+  - `https://[railway-web-url]/api/auth/callback/google`
 
 ---
 
@@ -129,6 +154,14 @@ Do not loop. Do not rewrite the same approach three times.
 - Styling: Tailwind CSS + shadcn/ui components — no inline styles, no CSS modules
 - Never use `any` — all Fastify response shapes have corresponding types in `apps/web/lib/types.ts`
 - File-based routing via App Router — `app/(app)/` for authenticated routes, `app/(auth)/` for unauthenticated
+
+**Next.js App Router deployment rules:**
+- Every deployment on Railway MUST expose `GET /api/healthz` returning `{ ok: true }` (no auth).
+  Set Railway web service healthcheck path to `/api/healthz` — NEVER `/` (middleware redirects
+  unauthenticated `/` to `/sign-in` with 302, which Railway treats as unhealthy → FAILED deploy).
+- The middleware `matcher` must exclude `/api/*` so healthcheck and NextAuth routes are never auth-gated.
+- `process.env` variables used inside `middleware.ts` (Edge Runtime) must be set at BUILD TIME or
+  added to `next.config.mjs` `env{}` — runtime-only Railway env vars may not reach Edge middleware.
 
 ### Fastify (Backend — packages/api)
 - All routes in `packages/api/src/routes/` — one file per domain
@@ -273,6 +306,9 @@ After **every completed phase**, write the phase summary block in Done.md:
 
 ## 8. Verification Checklist (run before checking off any task)
 
+**This checklist is blocking. Do not check off a task in Done.md until all applicable items pass.
+If an item is not applicable, write "N/A: [reason]" in the task's Done.md deviation note.**
+
 - [ ] TypeScript compiles: `tsc --noEmit` — zero errors in both `apps/web` and `packages/api`
 - [ ] No `any` types introduced
 - [ ] No hardcoded secrets or API keys
@@ -281,4 +317,10 @@ After **every completed phase**, write the phase summary block in Done.md:
 - [ ] File is under 200 lines (split if not)
 - [ ] Zod validation on any new Fastify route (input schema + output schema)
 - [ ] CORS headers present on new routes
+- [ ] No file-level `"use server"` in any file that also exports a React component
 - [ ] Done.md task checkbox checked off immediately after completion
+
+**After any `railway up` deploy:**
+- [ ] Deployment status is SUCCESS (not FAILED or BUILDING)
+- [ ] New-code endpoint confirmed live (hit a route unique to this phase)
+- [ ] If FAILED: build logs read and root cause identified before any retry
