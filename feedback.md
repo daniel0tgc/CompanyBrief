@@ -641,17 +641,309 @@ NextAuth v5 (beta) specific:
 
 ---
 
+---
+
+### E-21: TypeScript build does not copy non-`.ts` files to `dist/`
+**Phase:** 4 (would have crashed in production) | **Severity:** Critical — API startup crash in production, silent in dev
+
+**What happened:** `ANALYSIS_CONTEXT.md` was created at `packages/api/src/lib/agent/ANALYSIS_CONTEXT.md` and read at startup via `readFileSync(join(__dirname, "ANALYSIS_CONTEXT.md"))`. In development (`tsx watch`), `__dirname` resolves to `src/lib/agent/` and the file exists. In production (`tsc` then `node dist/server.js`), `__dirname` resolves to `dist/lib/agent/` but `tsc` only copies `.ts` files — the `.md` file is never in `dist/`. The server would have crashed with `ENOENT` on startup.
+
+**Root cause — Context.md:** Task 4.4 specifies loading `ANALYSIS_CONTEXT.md` from the filesystem at startup but says nothing about ensuring the file is present in the compiled output.
+
+**Root cause — CursorRules.md:** No rule about non-TypeScript assets in the compiled output. Section 5 (Fastify rules) has no mention of build asset handling.
+
+**Fixes:**
+- **Context.md Task 4.4:** Add a note: "After generating the file, update the `build` script in `packages/api/package.json` to copy it: `\"build\": \"tsc && mkdir -p dist/lib/agent && cp src/lib/agent/ANALYSIS_CONTEXT.md dist/lib/agent/\"`"
+- **CursorRules.md Section 5 (Fastify):** Add rule: "Any non-`.ts` file loaded at runtime (markdown, JSON configs, templates) must be explicitly copied in the `build` script — `tsc` only outputs compiled TypeScript."
+- **Done.md Phase 4 verification:** Add item: `[ ]` Verify `dist/lib/agent/ANALYSIS_CONTEXT.md` exists after running `pnpm build` before deploying.
+
+---
+
+### E-22: ESLint errors only caught at Railway `next build`, not by `tsc --noEmit`
+**Phase:** 6 | **Severity:** High — caused a failed deploy; wasted a full build cycle
+
+**What happened:** `SectionCard.tsx` had a prop `sectionKey: string` that was declared but not used in the component body. `tsc --noEmit` passed (TypeScript doesn't enforce ESLint rules). The ESLint `no-unused-vars` rule only runs during `next build`. The error was not caught locally and caused the first Railway deploy of Phase 6 to fail.
+
+**Root cause — CursorRules.md:** Section 8 (Verification Checklist) specifies `tsc --noEmit` as the compile check but does not require `next build` or `next lint` to be run before deploying.
+
+**Root cause — Context.md:** Verification sections for each phase only require TypeScript compile check, not a full build.
+
+**Fixes:**
+- **CursorRules.md Section 8 (Verification Checklist):** Add: `[ ]` Run `pnpm exec next build` in `apps/web` (not just `tsc --noEmit`) before every deploy — catches ESLint errors and static generation failures that `tsc` misses.
+- **CursorRules.md Section 3 (Universal Code Rules):** Add to "Always do": `✅ Run next build locally before any railway up — TypeScript passing does not mean the build passes.`
+- **Context.md:** Each phase's "Verification" section should include: "Run `pnpm exec next build` in `apps/web` and confirm zero errors."
+
+---
+
+### E-23: Railway silently serves old container when new build fails; logs are interleaved from both
+**Phase:** 6 (also Phase 3) | **Severity:** High — caused extended debugging confusion
+
+**What happened:** When a Railway deploy fails, Railway rolls back silently to the last successful image. The `railway logs --service web` output interleaves logs from the dying old container and the new failing container in the same stream without timestamps or container IDs. It is impossible to tell by reading logs alone whether you are looking at old-container output or new-container output.
+
+**Root cause — CursorRules.md:** Section 2 ("After every `railway up`") says to verify deployment status is SUCCESS, but does not explain HOW to distinguish old vs. new container logs or how to use the Railway GraphQL API to check deployment status by ID.
+
+**Fixes:**
+- **CursorRules.md Section 2:** Replace the current `railway up` guidance with:
+  ```
+  After every railway up:
+  1. Check deploy status via Railway API (not logs): query deployments for the service,
+     confirm the latest entry shows "SUCCESS" not "BUILDING" or "FAILED"
+  2. Use: curl -X POST https://backboard.railway.app/graphql/v2
+       -H "Authorization: Bearer <token>"
+       -d '{"query":"{ deployments(input:{serviceId:\"<id>\"}){ edges { node { status createdAt } } } }"}'
+  3. Do NOT rely on `railway logs` alone to determine if the new code is live — logs
+     are interleaved from old and new containers
+  4. Confirm new code is live by hitting an endpoint unique to this phase
+  ```
+- **Done.md template:** Add "Deploy verification" column to the phase summary: `{ deploymentId, status from API, new-code endpoint verified }`.
+
+---
+
+### E-24: Props declared in TypeScript but unused — only caught by ESLint, not `tsc`
+**Phase:** 6 | **Severity:** Medium — symptom of E-22 but worth a separate rule
+
+**What happened:** `SectionCard` received `sectionKey` as a prop for future use (Phase 7 filtering). TypeScript accepted it. ESLint `no-unused-vars` rejected it at build time. Fix was to use it as a `data-section` HTML attribute.
+
+**Root cause — CursorRules.md:** No rule about how to handle props that are declared for forward-compatibility but not yet used.
+
+**Fixes:**
+- **CursorRules.md Section 3:** Add rule: "Props declared for future use (not yet consumed in JSX) must either: (a) be used in a `data-*` attribute for traceability, or (b) be prefixed with `_` in the destructure to signal intentional non-use. Never leave destructured props silent."
+
+---
+
+### E-25: No dedicated debugging protocol — every failure required ad-hoc diagnosis
+**Phase:** All | **Severity:** Medium — wasted time on repeated diagnostic patterns
+
+**What happened:** Across all phases, the same diagnostic steps were reinvented each time an error occurred: check env vars, check secrets, check API logs, check build logs, confirm the new container is actually serving the new code. These steps are not documented anywhere in the project files. A debugging agent reading `CursorRules.md` has no runbook to follow.
+
+**Root cause:** No `DEBUG.md` file exists. `CursorRules.md` has a `BLOCKED` output format but no diagnostic decision tree.
+
+**Fixes:**
+- **Create `DEBUG.md`:** A standalone file that a debugging-specific agent reads to diagnose production and build failures. See Part 5 for proposed content.
+- **CursorRules.md Section 1:** Add: "If you encounter an error that is not immediately obvious, read `DEBUG.md` before attempting any fix. DEBUG.md contains diagnostic runbooks for every known failure class in this stack."
+
+---
+
+## Part 5 — Proposed New Files and Document Improvements
+
+---
+
+### 5.1 — Proposed: `DEBUG.md` (Debugging Agent Reference)
+
+This file should be created at the repo root and read exclusively by a debugging-focused agent. It should contain **no code** — only diagnostic runbooks, decision trees, and known failure signatures.
+
+**Proposed structure:**
+
+```markdown
+# DEBUG.md — CompanyBrief Debugging Runbook
+
+## How to use this file
+Read this before attempting any fix. Each section covers a failure class,
+its most common causes (ordered by likelihood), and the exact commands to
+run at each diagnostic step.
+
+---
+
+## Failure Class 1: "Application error" / Next.js 500
+
+Step 1: Check web service runtime logs
+  railway logs --service web 2>&1 | tail -50
+  → Look for: the error class (ApiError, TypeError, etc.) and the source file
+
+Step 2: Identify which layer threw
+  - If source is `app/(app)/company/[id]/page.js` → company page render failed
+    → Most likely: getCompany() returned non-404 error
+    → Check: is the API returning 401? (see Failure Class 2)
+  - If source is `app/page.js` → server action or landing page render failed
+    → Check: is NEXT_PUBLIC_API_URL set correctly on the web Railway service?
+  - If source is `app/(app)/dashboard/page.js` → dashboard render failed
+    → Check: is getCompanies() throwing? (has try/catch — should be silent)
+
+Step 3: Check if the API is receiving requests
+  railway logs --service api 2>&1 | tail -20
+  → If NO requests appear for a known action → token is not being sent
+    → See Failure Class 2
+
+---
+
+## Failure Class 2: 401 Unauthorized on all API calls
+
+Checklist (run in order, stop at the first failure):
+1. Is NEXTAUTH_SECRET identical on both Railway services?
+   railway variables --service api 2>&1 | grep NEXTAUTH_SECRET
+   railway variables --service web 2>&1 | grep NEXTAUTH_SECRET
+   → Must be byte-for-byte identical
+
+2. Are API requests reaching Fastify at all?
+   railway logs --service api 2>&1 | tail -20
+   → If no incoming requests: token is null → getRawToken() cookie lookup failing
+   → Fix: check cookie names — NextAuth v5 uses authjs.* not next-auth.*
+
+3. Is jwtDecrypt failing (token reaches Fastify but is rejected)?
+   → Add temporary log in verifyNextAuthToken to print rawToken.slice(0,20)
+   → If token is present but payload is null: secret mismatch or token format wrong
+
+4. Is the token cookie being set by NextAuth at all?
+   → Open browser devtools → Application → Cookies → look for authjs.session-token
+   → If missing: NextAuth session not persisting → check NEXTAUTH_URL and trustHost
+
+---
+
+## Failure Class 3: Railway deploy shows FAILED
+
+Step 1: Is it a build failure or a runtime/healthcheck failure?
+  Query Railway API for deploy status:
+  curl -X POST https://backboard.railway.app/graphql/v2 \
+    -H "Authorization: Bearer <token from ~/.railway/config.json>" \
+    -H "Content-Type: application/json" \
+    -d '{"query":"{ deployments(input:{serviceId:\"SERVICE_ID\"}){ edges { node { status createdAt } } } }"}'
+
+Step 2: If build failure — check build logs, NOT runtime logs
+  railway logs --service [api|web] 2>&1 | grep -E "error|Error|failed|Failed"
+  → For web: next build errors (ESLint, TypeScript) appear in the build phase
+  → For api: tsc errors appear in the build phase
+
+Step 3: For web service FAILED with server starting in logs
+  → This is a HEALTHCHECK failure, not a build failure
+  → Healthcheck path must be /api/healthz (not /)
+  → Confirm middleware matcher excludes /api/*
+
+Step 4: Confirm new container is serving, not old
+  → Do NOT trust `railway logs` alone — logs are interleaved from old + new containers
+  → Hit an endpoint unique to the new phase and confirm the response
+  → Or query Railway API: status should show "SUCCESS" not "FAILED"
+
+---
+
+## Failure Class 4: Analysis job not running / stuck on "pending"
+
+Step 1: Is the BullMQ worker starting?
+  railway logs --service api 2>&1 | grep -i "analysis\|bullmq\|worker"
+
+Step 2: Is Redis reachable?
+  railway logs --service api 2>&1 | grep -i "redis\|ECONNREFUSED"
+  → ioredis requires maxRetriesPerRequest: null for BullMQ — check redis.ts
+
+Step 3: Is ANTHROPIC_API_KEY set?
+  railway variables --service api 2>&1 | grep ANTHROPIC
+
+Step 4: Is TAVILY_API_KEY set?
+  railway variables --service api 2>&1 | grep TAVILY
+  → If empty: agent will use error strings as tool results but will not crash
+
+Step 5: Is ANALYSIS_CONTEXT.md in dist/?
+  → If API starts but agent crashes immediately: readFileSync ENOENT
+  → Fix: ensure build script copies src/lib/agent/ANALYSIS_CONTEXT.md to dist/lib/agent/
+
+---
+
+## Failure Class 5: SSE stream not receiving events in browser
+
+Step 1: Confirm EventSource URL is correct
+  → Open browser devtools → Network → filter "stream" → check the URL
+  → Should be: https://api.railway.app/companies/[id]/stream?token=<JWE>
+  → If token is missing/empty: getRawToken() returned null in server component
+
+Step 2: Confirm SSE route is authenticated
+  curl -N "https://api-production-7bed.up.railway.app/companies/[id]/stream?token=[token]"
+  → If 401: token invalid or expired → re-login and try again
+  → If 404: company not found or wrong ownership
+
+Step 3: Is the BullMQ worker publishing events?
+  → Check API logs for publishAgentEvent errors
+  → Check that Redis pub/sub channel matches: analysis:[companyId]
+
+Step 4: Is the subscriber client connecting?
+  → Check API logs for Redis connection errors in subscribeToAnalysis
+
+---
+
+## Failure Class 6: Chat returning 400 "Analysis not ready"
+
+  → Company status is not 'complete'
+  → Check: GET /companies/:id → { company.status }
+  → If status is 'error': check company.errorMessage for agent failure reason
+  → If status is 'running': wait for analysis to finish before chatting
+  → If status is 'pending': job may not have started → check BullMQ worker
+
+---
+
+## Known Gotchas (quick reference)
+
+| Symptom | First thing to check |
+|---|---|
+| 401 on all routes, no API log entries | Cookie name: authjs.* vs next-auth.* |
+| 401 on all routes, API log shows inbound | NEXTAUTH_SECRET mismatch |
+| Deploy FAILED, server seems to start | Healthcheck path wrong or middleware blocking /api/* |
+| `next build` passes, deploy fails ESLint | Run `next build` locally, not just `tsc --noEmit` |
+| Agent always produces placeholder data | Check ANALYSIS_CONTEXT.md exists in dist/lib/agent/ |
+| SSE connects but no events arrive | Check Redis pub/sub channel name: analysis:[companyId] |
+| Company stuck on "pending" forever | BullMQ worker not starting — check REDIS_URL |
+| `jwtDecrypt` returns null | NEXTAUTH_SECRET wrong format or mismatch |
+| Railway shows old code after deploy | Check deploy status via GraphQL API, not logs |
+```
+
+---
+
+### 5.2 — Improvements to `CursorRules.md`
+
+| Section | Improvement |
+|---|---|
+| Section 2 (Per-Task Discipline) | Add: "Always run `next build` in `apps/web` before `railway up` — `tsc --noEmit` does not catch ESLint errors or static generation failures" |
+| Section 2 (railway up) | Replace log-based verification with Railway GraphQL API status query — logs are interleaved and unreliable for determining which container is live |
+| Section 3 (Universal Code Rules) | Add: `✅ Non-TS assets loaded at runtime (markdown, JSON) must be explicitly copied in the `build` script` |
+| Section 3 (Universal Code Rules) | Add: `✅ Props declared for future use must use data-* attribute or _ prefix to satisfy ESLint` |
+| Section 4 (Auth Rules) | Add explicit cookie name table: v4 = `next-auth.*`, v5 = `authjs.*`, always check both |
+| Section 4 (Auth Rules) | Add diagnostic rule: "If every API call returns 401 and Fastify logs show zero requests, check cookie names before anything else" |
+| Section 8 (Verification) | Replace `tsc --noEmit` with `next build` for web; add item to confirm API logs show inbound requests after auth is implemented |
+| New Section 9 | Add: "On any undiagnosed error, read `DEBUG.md` before attempting a fix" |
+
+---
+
+### 5.3 — Improvements to `Context.md`
+
+| Location | Improvement |
+|---|---|
+| Phase 2 Task 2.8 | Specify all 4 cookie name variants to check, not just the v4 names |
+| Phase 2 Verification | Add: "Hit `GET /auth/me` from a browser → confirm Fastify API log shows the inbound request. If no request appears, `getRawToken()` is null." |
+| Phase 4 Task 4.4 | Add: "After creating ANALYSIS_CONTEXT.md, update the `build` script to copy it to dist/" |
+| Phase 4 Verification | Add: "Run `pnpm build` in `packages/api` and confirm `dist/lib/agent/ANALYSIS_CONTEXT.md` exists" |
+| Every phase Verification | Add: "Run `pnpm exec next build` in `apps/web` and confirm zero errors (not just `tsc --noEmit`)" |
+| Every phase Verification | Add: "After `railway up`: query Railway GraphQL API to confirm status=SUCCESS before checking logs" |
+| Phase 6 Task 6.2 | Add: "All props in the component signature must be used — if a prop is for future use, add it as a `data-*` attribute or `_`-prefix it in the destructure" |
+
+---
+
+### 5.4 — Improvements to `Done.md`
+
+| Location | Improvement |
+|---|---|
+| Per-phase template | Add "Build Verified" row: `[ ] next build — zero errors locally before deploy` |
+| Per-phase template | Add "Deploy Verified" row: `[ ] Railway API status = SUCCESS (not log-based)` |
+| Per-phase template | Add "Smoke Test" row: specific endpoint to hit to confirm new code is live |
+| Phase 2 template | Add: "Auth smoke test: `GET /auth/me` while logged in → 200 AND Fastify log shows inbound request" |
+| Phase 4 template | Add: "Asset smoke test: `dist/lib/agent/ANALYSIS_CONTEXT.md` exists after `pnpm build`" |
+| Codebase State Graph | Add `Railway deploy IDs` section: latest successful deploy ID per service |
+| Required Keys table | Add "verified working" column (separate from "set in Railway") |
+
+---
+
 ## Part 4 — Priority Order for Fixes
 
 | Priority | Issue | Impact |
 |---|---|---|
 | 🔴 Critical | E-20 + cookie name spec | App fully non-functional after login; hard to diagnose |
+| 🔴 Critical | E-21 + build script spec | Agent startup crash in production; silent in dev |
 | 🔴 Critical | E-10, E-17 + Platform section | Prevented production deploys for hours |
 | 🔴 Critical | E-14 + healthcheck spec | 5 failed deploys |
 | 🔴 Critical | E-15 + build verification rule | Masked actual errors, caused debug loops |
+| 🟠 High | E-22 + next build in checklist | Failed deploy; wasted full Railway build cycle |
+| 🟠 High | E-23 + Railway log guidance | Extended confusion about which container is live |
 | 🟠 High | E-08 + jose spec | Wrong library specified |
 | 🟠 High | E-05 + Railway CLI fallback | Blocked infrastructure setup |
 | 🟠 High | E-07 + migration strategy | Undefined production DB migration plan |
+| 🟡 Medium | E-24 + unused-prop rule | ESLint failure; one wasted deploy |
+| 🟡 Medium | E-25 + DEBUG.md creation | Repeated ad-hoc diagnosis across all phases |
 | 🟡 Medium | E-02, E-03, E-04 | Scaffolding friction |
 | 🟡 Medium | E-09, E-11, E-12 | Auth integration nuances |
 | 🟢 Low | E-01, E-06, E-18, E-19 | One-time environmental issues |
