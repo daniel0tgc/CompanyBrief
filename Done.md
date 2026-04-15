@@ -20,7 +20,7 @@
 **Last updated:** 2026-04-15
 **Web URL:** https://web-production-f5f8.up.railway.app
 **API URL:** https://api-production-7bed.up.railway.app
-**Current phase:** Phase 4 complete — Phase 5 next
+**Current phase:** Phase 5 complete — Phase 6 next
 **Start method:** Scaffold from scratch
 
 ---
@@ -44,7 +44,7 @@
 - [x] Phase 2: Google OAuth (NextAuth v5)
 - [x] Phase 3: Company CRUD + dashboard shell
 - [x] Phase 4: Analysis agent (Anthropic tool use)
-- [ ] Phase 5: SSE streaming (Redis pub/sub → EventSource)
+- [x] Phase 5: SSE streaming (Redis pub/sub → EventSource)
 - [ ] Phase 6: Analysis UI (section cards + agent thinking)
 - [ ] Phase 7: Chatbot + expansion cards
 - [ ] Phase 8: Dashboard polish + company management
@@ -323,36 +323,48 @@ None at build time. `tsc --noEmit` passed with zero errors in both packages. No 
 ---
 
 ### Phase 5 — SSE Streaming
-**Completed:** [DATE]
-**Status:** `[ ] Not started`
+**Completed:** 2026-04-15
+**Status:** `[x] Complete`
 
 #### Task Checkboxes
-- [ ] 5.1 — Redis pub/sub helpers
-- [ ] 5.2 — SSE route
-- [ ] 5.3 — Frontend EventSource hook
-- [ ] 5.4 — SSE token auth (query param)
-- [ ] 5.5 — Wire up end-to-end
+- [x] 5.1 — Redis pub/sub helpers
+- [x] 5.2 — SSE route
+- [x] 5.3 — Frontend EventSource hook
+- [x] 5.4 — SSE token auth (query param)
+- [x] 5.5 — Wire up end-to-end
 
 #### Deviations
-- 5.1: [none | describe]
-- 5.2: [none | describe]
-- 5.3: [none | describe]
-- 5.4: [none | describe]
-- 5.5: [none | describe]
+- 5.1: none — publisher uses singleton ioredis client; each subscriber call creates a new dedicated client (ioredis subscriber mode constraint)
+- 5.2: Used `reply.hijack()` to prevent Fastify from sending its own response after the handler. Added `X-Accel-Buffering: no` header for Railway's nginx reverse proxy. Returns a promise that awaits the `close` event on `request.raw` to keep the connection alive until client disconnects.
+- 5.3: `useAnalysisStream` takes `token` as a second parameter (deviation from Context.md spec which only has `companyId`). EventSource cannot set headers, so the token must come from the server component via props. The hook adds `"use client"` directive at the top of the file (not file-level `"use server"` — correct).
+- 5.4: Already implemented in Phase 2 `verifyNextAuthToken` — `?token=` query param accepted as fallback to Authorization header. No changes needed.
+- 5.5: Pre-work: fixed API build script to copy `ANALYSIS_CONTEXT.md` to `dist/lib/agent/` (`tsc` does not copy non-TS files). This was a Phase 4 oversight that would have crashed the API on Railway startup.
 
 #### Phase Summary
-[CURSOR WRITES THIS]
+SSE streaming is fully wired from BullMQ worker → Redis pub/sub → Fastify SSE route → browser EventSource. `redis-pubsub.ts` extracts the publish/subscribe logic from the job file and provides typed `publishAgentEvent` and `subscribeToAnalysis` helpers. The SSE route at `GET /companies/:id/stream` handles three cases: replay full analysis immediately if already complete, send error event if status is error, or subscribe live to Redis channel and forward all agent events. `useAnalysisStream` hook on the frontend opens an EventSource, parses all event types into state (`sections`, `thinking`, `isStreaming`, `isComplete`, `error`), and cleans up on unmount. Both services deployed and healthy.
 
 #### Files Created
 ```
-[exact paths]
+packages/api/src/lib/redis-pubsub.ts
+apps/web/lib/useAnalysisStream.ts
+```
+
+#### Files Modified
+```
+packages/api/src/routes/companies.ts   (added GET /companies/:id/stream)
+packages/api/src/jobs/analysis.job.ts  (emit uses publishAgentEvent)
+packages/api/package.json              (build script copies ANALYSIS_CONTEXT.md to dist/)
 ```
 
 #### Issues Encountered
-[CURSOR WRITES THIS — note any Railway SSE timeout issues or Redis pub/sub connection handling]
+Phase 4 oversight: `tsc` does not copy `.md` files to `dist/`, so `ANALYSIS_CONTEXT.md` would not be present at `dist/lib/agent/ANALYSIS_CONTEXT.md` in production. Fixed by updating the build script: `"build": "tsc && mkdir -p dist/lib/agent && cp src/lib/agent/ANALYSIS_CONTEXT.md dist/lib/agent/"`. TypeScript error on `subscribeToAnalysis` return type: initially typed as `Promise<() => void>` but the inner unsubscribe function is async (`Promise<void>`), so `unsub().catch()` failed. Fixed by typing as `Promise<() => Promise<void>>`.
 
 #### Notes for Claude Code
-[CURSOR WRITES THIS]
+- The `useAnalysisStream` hook requires both `companyId` and `token`. Phase 6 task 6.5 (company analysis page) must read the raw token server-side via `getRawToken()` and pass it as a prop to the `AnalysisView` client component, which passes it to the hook.
+- `ANALYSIS_CONTEXT.md` is now correctly copied to `dist/` on every Railway build — this is idempotent and safe.
+- The SSE route is at `GET /companies/:id/stream` and is listed in the API routes table.
+- The `section_complete` event payload is `{ section: string, data: unknown }` where `data` is the section's partial `CompanyAnalysis` object (e.g. `{ tagline: "..." }` for the tagline section). The hook spreads this into `sections` state.
+- Railway does not time out long-lived SSE connections as long as data is flowing; the `X-Accel-Buffering: no` header prevents nginx from buffering.
 
 ---
 
@@ -506,7 +518,7 @@ MODULES:
 │       │   └── ANALYSIS_CONTEXT.md [Phase 4] agent system prompt (loaded at startup)
 │       ├── tavily.ts         [Phase 4] tavilySearch, tavilyNewsSearch, tavilyExtract
 │       ├── scraper.ts        [Phase 4] cheerio scraper + Tavily fallback
-│       ├── redis-pubsub.ts   [not started]
+│       ├── redis-pubsub.ts   [Phase 5] publishAgentEvent, subscribeToAnalysis
 │       ├── queue.ts          [Phase 3] BullMQ Queue 'analysis'
 │       ├── redis.ts          [Phase 3] ioredis client
 │       └── types.ts          [Phase 1] CompanyAnalysis type only
@@ -531,7 +543,7 @@ MODULES:
 │   │   ├── auth.ts           [Phase 3] + trustHost: true
 │   │   ├── api.ts            [Phase 3] + getCompanies, getCompany, createCompany, deleteCompany
 │   │   ├── types.ts          [Phase 3] CompanyListItem, Company, CompanyAnalysis, ExpansionCard
-│   │   └── useAnalysisStream.ts [not started]
+│   │   └── useAnalysisStream.ts [Phase 5] EventSource hook — thinking/tool/section/replay events
 │   └── middleware.ts         [Phase 2] auth gate → /sign-in
 
 API ROUTES (packages/api):
@@ -541,11 +553,12 @@ API ROUTES (packages/api):
   POST /companies (protected)  → 201 { company } (queues BullMQ job)
   GET  /companies/:id (protected) → { company } (full, with analysis)
   DELETE /companies/:id (protected) → 204
+  GET  /companies/:id/stream (protected, ?token= auth) → SSE text/event-stream
 
 KNOWN ISSUES:
   apps/web/app/globals.css: removed outline-ring/50 universal @apply (Tailwind v3 incompatible).
   Postgres PGDATA is at /var/lib/postgresql/data/pgdata (subdirectory to avoid lost+found conflict).
-  Railway env vars ANTHROPIC_API_KEY, TAVILY_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET empty.
+  Railway env vars TAVILY_API_KEY may still be empty — set before testing live analysis.
 
 OPEN DECISIONS:
   None
