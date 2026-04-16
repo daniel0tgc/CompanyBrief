@@ -98,10 +98,14 @@ export async function companiesRoutes(app: FastifyInstance) {
 
       reply.hijack();
       const raw = reply.raw;
+      const allowedOrigin =
+        process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
       raw.setHeader("Content-Type", "text/event-stream");
       raw.setHeader("Cache-Control", "no-cache");
       raw.setHeader("Connection", "keep-alive");
       raw.setHeader("X-Accel-Buffering", "no");
+      raw.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+      raw.setHeader("Access-Control-Allow-Credentials", "true");
 
       function send(event: unknown): void {
         if (!raw.destroyed) {
