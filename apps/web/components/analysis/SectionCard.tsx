@@ -13,10 +13,36 @@ function renderContent(data: unknown): React.ReactNode {
     return <p className="text-sm text-gray-700 leading-relaxed">{data}</p>;
   }
 
-  if (Array.isArray(data) && data.length > 0) {
-    const first = data[0] as Record<string, unknown>;
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
+      return <p className="text-sm text-gray-400 italic">No data available.</p>;
+    }
 
-    if ("name" in first && "notes" in first) {
+    const first = data[0];
+
+    // Guard: if the first element is not a plain object, treat the whole
+    // array as a string list (handles cases where the AI returned a string
+    // field wrapped in an array, e.g. tagline: ["Stripe is..."])
+    if (typeof first !== "object" || first === null) {
+      // Single-element string array that was meant to be a plain string
+      if (data.length === 1 && typeof first === "string") {
+        return <p className="text-sm text-gray-700 leading-relaxed">{first}</p>;
+      }
+      return (
+        <ul className="space-y-1.5">
+          {data.map((item, i) => (
+            <li key={i} className="flex gap-2 text-sm text-gray-700 leading-relaxed">
+              <span className="text-blue-400 mt-1.5 shrink-0">•</span>
+              <span>{typeof item === "string" ? item : JSON.stringify(item)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+
+    const firstObj = first as Record<string, unknown>;
+
+    if ("name" in firstObj && "notes" in firstObj) {
       return (
         <div className="space-y-2">
           {(data as CompetitorItem[]).map((item, i) => (
@@ -29,7 +55,7 @@ function renderContent(data: unknown): React.ReactNode {
       );
     }
 
-    if ("category" in first && "examples" in first) {
+    if ("category" in firstObj && "examples" in firstObj) {
       return (
         <div className="space-y-2">
           {(data as CustomerItem[]).map((item, i) => (
@@ -51,15 +77,11 @@ function renderContent(data: unknown): React.ReactNode {
         {(data as StringArray).map((item, i) => (
           <li key={i} className="flex gap-2 text-sm text-gray-700 leading-relaxed">
             <span className="text-blue-400 mt-1.5 shrink-0">•</span>
-            <span>{item}</span>
+            <span>{typeof item === "string" ? item : JSON.stringify(item)}</span>
           </li>
         ))}
       </ul>
     );
-  }
-
-  if (Array.isArray(data) && data.length === 0) {
-    return <p className="text-sm text-gray-400 italic">No data available.</p>;
   }
 
   if (typeof data === "object" && data !== null && "pros" in data) {
