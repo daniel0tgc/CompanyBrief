@@ -4,7 +4,7 @@ import { verifyNextAuthToken } from "../plugins/auth.js";
 import { companiesRepository } from "../db/repository/companies.js";
 import { conversationsRepository, type Message } from "../db/repository/conversations.js";
 import { expansionCardsRepository } from "../db/repository/expansionCards.js";
-import { makeGroqClient, CHAT_MODEL } from "../lib/groq.js";
+import { detectProvider, resolveKey, getModels, makeAnthropicClient, makeOpenAIClient } from "../lib/ai-client.js";
 
 const chatSchema = z.object({
   question: z.string().min(1).max(500),
@@ -45,19 +45,37 @@ ${JSON.stringify(company.analysis, null, 2)}
 Respond ONLY with valid JSON in this exact format (no preamble, no markdown):
 { "section_key": "one of: ${SECTION_KEYS}", "answer": "your answer here" }`;
 
-      const groq = makeGroqClient(request.user.groqApiKey);
-      const response = await groq.chat.completions.create({
-        model: CHAT_MODEL,
-        max_tokens: 1024,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: question },
-        ],
-      });
+      const key = resolveKey(request.user.groqApiKey);
+      const provider = detectProvider(key);
+      const chatModel = getModels(provider).chat;
 
-      const raw = (response.choices[0]?.message.content ?? "").trim();
-      if (!raw) return reply.status(500).send({ error: "No response from agent" });
+      let rawResponse: string;
 
+      if (provider === "anthropic") {
+        const client = makeAnthropicClient(key);
+        const res = await client.messages.create({
+          model: chatModel,
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: [{ role: "user", content: question }],
+        });
+        rawResponse = (res.content.find((b) => b.type === "text") as { text: string } | undefined)?.text ?? "";
+      } else {
+        const client = makeOpenAIClient(key, provider);
+        const res = await client.chat.completions.create({
+          model: chatModel,
+          max_tokens: 1024,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: question },
+          ],
+        });
+        rawResponse = res.choices[0]?.message.content ?? "";
+      }
+
+      if (!rawResponse.trim()) return reply.status(500).send({ error: "No response from agent" });
+
+      const raw = rawResponse.trim();
       const jsonStart = raw.indexOf("{");
       const jsonEnd = raw.lastIndexOf("}");
       const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)) as {
