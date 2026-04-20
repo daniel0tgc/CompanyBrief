@@ -54,4 +54,10 @@ export const usersRepository = {
 
     return inserted[0];
   },
+  async updateApiKey(id: string, groqApiKey: string | null): Promise<void> {
+    await db
+      .update(users)
+      .set({ groqApiKey, updatedAt: new Date() })
+      .where(eq(users.id, id));
+  },
 };

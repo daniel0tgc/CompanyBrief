@@ -8,6 +8,13 @@
       "when": 1776220762168,
       "tag": "0000_unknown_mongoose",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776651124167,
+      "tag": "0001_ancient_wind_dancer",
+      "breakpoints": true
     }
   ]
 }

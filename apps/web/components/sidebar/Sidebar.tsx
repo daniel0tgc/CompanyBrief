@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Settings } from "lucide-react";
 import { CompanyListItem } from "./CompanyListItem";
 import type { CompanyListItem as CompanyListItemType } from "@/lib/types";
 
@@ -27,12 +28,19 @@ export function Sidebar({
         ))}
       </div>
 
-      <div className="px-4 py-3 border-t border-gray-200">
+      <div className="px-4 py-3 border-t border-gray-200 space-y-2">
         <Link
           href="/"
           className="w-full bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors flex items-center justify-center"
         >
           + New Company
+        </Link>
+        <Link
+          href="/settings"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+        >
+          <Settings className="w-3.5 h-3.5" />
+          Settings
         </Link>
       </div>
     </aside>

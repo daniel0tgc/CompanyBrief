@@ -16,9 +16,10 @@ export function startAnalysisWorker() {
   const worker = new Worker(
     "analysis",
     async (job) => {
-      const { companyId, companyName } = job.data as {
+      const { companyId, companyName, userGroqApiKey } = job.data as {
         companyId: string;
         companyName: string;
+        userGroqApiKey?: string | null;
       };
 
       console.log(`[analysis.job] Starting agent for "${companyName}" (${companyId})`);
@@ -28,7 +29,7 @@ export function startAnalysisWorker() {
       const emit = makeEmitter(companyId);
 
       try {
-        const analysis = await runAnalysisAgent(companyName, companyId, emit);
+        const analysis = await runAnalysisAgent(companyName, companyId, emit, userGroqApiKey);
         await companiesRepository.updateStatus(companyId, "complete", analysis);
         console.log(`[analysis.job] Agent complete for "${companyName}" (${companyId})`);
       } catch (err) {

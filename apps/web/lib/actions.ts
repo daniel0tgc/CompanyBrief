@@ -50,3 +50,12 @@ export async function sendChatMessage(
     },
   );
 }
+
+export async function saveApiKey(
+  groqApiKey: string | null,
+): Promise<{ ok: boolean }> {
+  return apiClient<{ ok: boolean }>("/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify({ groqApiKey }),
+  });
+}

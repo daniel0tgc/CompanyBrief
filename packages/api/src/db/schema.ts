@@ -7,6 +7,7 @@ export const users = pgTable("users", {
   googleId: text("google_id").unique(),
   displayName: text("display_name"),
   avatarUrl: text("avatar_url"),
+  groqApiKey: text("groq_api_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

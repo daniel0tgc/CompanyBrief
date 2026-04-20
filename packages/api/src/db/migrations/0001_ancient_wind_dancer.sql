@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "groq_api_key" text;

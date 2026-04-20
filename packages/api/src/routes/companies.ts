@@ -52,6 +52,7 @@ export async function companiesRoutes(app: FastifyInstance) {
       await analysisQueue.add("analyse", {
         companyId: company.id,
         companyName: company.name,
+        userGroqApiKey: request.user.groqApiKey ?? null,
       });
 
       return reply.status(201).send({ company });

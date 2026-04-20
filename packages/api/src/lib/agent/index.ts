@@ -1,7 +1,8 @@
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
+import { makeGroqClient, ANALYSIS_MODEL } from "../groq.js";
 import { analysisTools } from "./tools.js";
 import { tavilySearch, tavilyNewsSearch } from "../tavily.js";
 import { scrapeUrl } from "../scraper.js";
@@ -38,10 +39,7 @@ const SECTIONS = [
 ] as const;
 
 type SectionName = (typeof SECTIONS)[number];
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 async function executeTool(
   toolName: string,
@@ -65,146 +63,121 @@ async function runSection(
   section: SectionName,
   companyName: string,
   emit: (event: AgentEvent) => void,
+  groq: OpenAI,
 ): Promise<unknown> {
   const systemPrompt = `${SYSTEM_PROMPT}\n\nCurrent section: ${section}\nCompany: ${companyName}`;
 
-  const messages: Anthropic.MessageParam[] = [
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
     {
       role: "user",
       content: `Generate the "${section}" section of the analysis for the company: ${companyName}. Follow the instructions in your system prompt exactly. Use the available tools to gather real data before producing the JSON output.`,
     },
   ];
 
-  let response = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+  let response = await groq.chat.completions.create({
+    model: ANALYSIS_MODEL,
     max_tokens: 4096,
-    system: systemPrompt,
     tools: analysisTools,
+    tool_choice: "auto",
     messages,
   });
 
-  while (response.stop_reason === "tool_use") {
-    const assistantContent = response.content;
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+  while (response.choices[0]?.finish_reason === "tool_calls") {
+    const assistantMessage = response.choices[0].message;
 
-    for (const block of assistantContent) {
-      if (block.type === "text" && block.text.trim()) {
-        emit({ type: "thinking", payload: { text: block.text } });
-      }
-
-      if (block.type === "tool_use") {
-        emit({
-          type: "tool_call",
-          payload: { tool: block.name, input: block.input },
-        });
-
-        let resultContent: string;
-        try {
-          resultContent = await executeTool(
-            block.name,
-            block.input as Record<string, unknown>,
-          );
-        } catch (err) {
-          resultContent = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
-        }
-
-        emit({
-          type: "tool_result",
-          payload: { tool: block.name, preview: resultContent.slice(0, 200) },
-        });
-
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: resultContent,
-        });
-      }
+    if (assistantMessage.content?.trim()) {
+      emit({ type: "thinking", payload: { text: assistantMessage.content } });
     }
 
-    messages.push({ role: "assistant", content: assistantContent });
-    messages.push({ role: "user", content: toolResults });
+    const toolResults: ChatMessage[] = [];
 
-    response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+    for (const toolCall of assistantMessage.tool_calls ?? []) {
+      if (toolCall.type !== "function") continue;
+      const toolInput = JSON.parse(toolCall.function.arguments) as Record<
+        string,
+        unknown
+      >;
+
+      emit({
+        type: "tool_call",
+        payload: { tool: toolCall.function.name, input: toolInput },
+      });
+
+      let resultContent: string;
+      try {
+        resultContent = await executeTool(toolCall.function.name, toolInput);
+      } catch (err) {
+        resultContent = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+
+      emit({
+        type: "tool_result",
+        payload: {
+          tool: toolCall.function.name,
+          preview: resultContent.slice(0, 200),
+        },
+      });
+
+      toolResults.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: resultContent,
+      });
+    }
+
+    messages.push(assistantMessage);
+    messages.push(...toolResults);
+
+    response = await groq.chat.completions.create({
+      model: ANALYSIS_MODEL,
       max_tokens: 4096,
-      system: systemPrompt,
       tools: analysisTools,
+      tool_choice: "auto",
       messages,
     });
   }
 
-  const lastTextBlock = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .at(-1);
+  const finalContent = response.choices[0]?.message.content ?? "";
 
-  if (!lastTextBlock) {
-    throw new Error(`No text block in final response for section: ${section}`);
-  }
-
-  const raw = lastTextBlock.text.trim();
-
-  const jsonStart = raw.indexOf("{");
-  const jsonEnd = raw.lastIndexOf("}");
+  const jsonStart = finalContent.indexOf("{");
+  const jsonEnd = finalContent.lastIndexOf("}");
   if (jsonStart === -1 || jsonEnd === -1) {
     throw new Error(
-      `No JSON found in response for section ${section}: ${raw.slice(0, 300)}`,
+      `No JSON found in response for section ${section}: ${finalContent.slice(0, 300)}`,
     );
   }
 
-  return JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+  return JSON.parse(finalContent.slice(jsonStart, jsonEnd + 1));
 }
 
 export async function runAnalysisAgent(
   companyName: string,
   companyId: string,
   emit: (event: AgentEvent) => void,
+  userApiKey?: string | null,
 ): Promise<CompanyAnalysis> {
+  const groq = makeGroqClient(userApiKey);
   const partial: Partial<CompanyAnalysis> = {};
 
   for (const section of SECTIONS) {
     try {
-      const data = await runSection(section, companyName, emit);
+      const data = await runSection(section, companyName, emit, groq);
       const sectionData = data as Record<string, unknown>;
 
-      if (section === "tagline") {
-        partial.tagline = sectionData.tagline as string;
-      } else if (section === "what_they_do") {
-        partial.what_they_do = sectionData.what_they_do as string[];
-      } else if (section === "problem_solved") {
-        partial.problem_solved = sectionData.problem_solved as string[];
-      } else if (section === "ai_angle") {
-        partial.ai_angle = sectionData.ai_angle as string[];
-      } else if (section === "competitive_position") {
-        partial.competitive_position =
-          sectionData.competitive_position as string[];
-      } else if (section === "competitors") {
-        partial.competitors = sectionData.competitors as {
-          name: string;
-          notes: string;
-        }[];
-      } else if (section === "customers") {
-        partial.customers = sectionData.customers as {
-          category: string;
-          examples: string[];
-        }[];
-      } else if (section === "market_attractiveness") {
-        partial.market_attractiveness =
-          sectionData.market_attractiveness as string[];
-      } else if (section === "disruption_risks") {
-        partial.disruption_risks = sectionData.disruption_risks as string[];
-      } else if (section === "future_outlook") {
-        partial.future_outlook = sectionData.future_outlook as string[];
-      } else if (section === "bull_case") {
-        partial.bull_case = sectionData.bull_case as string;
-      } else if (section === "bear_case") {
-        partial.bear_case = sectionData.bear_case as string;
-      } else if (section === "feedback") {
-        partial.feedback = sectionData.feedback as {
-          pros: string[];
-          cons: string[];
-          source_url: string;
-        };
-      }
+      if (section === "tagline") partial.tagline = sectionData.tagline as string;
+      else if (section === "what_they_do") partial.what_they_do = sectionData.what_they_do as string[];
+      else if (section === "problem_solved") partial.problem_solved = sectionData.problem_solved as string[];
+      else if (section === "ai_angle") partial.ai_angle = sectionData.ai_angle as string[];
+      else if (section === "competitive_position") partial.competitive_position = sectionData.competitive_position as string[];
+      else if (section === "competitors") partial.competitors = sectionData.competitors as { name: string; notes: string }[];
+      else if (section === "customers") partial.customers = sectionData.customers as { category: string; examples: string[] }[];
+      else if (section === "market_attractiveness") partial.market_attractiveness = sectionData.market_attractiveness as string[];
+      else if (section === "disruption_risks") partial.disruption_risks = sectionData.disruption_risks as string[];
+      else if (section === "future_outlook") partial.future_outlook = sectionData.future_outlook as string[];
+      else if (section === "bull_case") partial.bull_case = sectionData.bull_case as string;
+      else if (section === "bear_case") partial.bear_case = sectionData.bear_case as string;
+      else if (section === "feedback") partial.feedback = sectionData.feedback as { pros: string[]; cons: string[]; source_url: string };
 
       emit({ type: "section_complete", payload: { section, data } });
     } catch (err) {
@@ -214,7 +187,7 @@ export async function runAnalysisAgent(
     }
   }
 
-  const analysis: CompanyAnalysis = {
+  return {
     tagline: partial.tagline ?? "",
     what_they_do: partial.what_they_do ?? [],
     problem_solved: partial.problem_solved ?? [],
@@ -230,6 +203,4 @@ export async function runAnalysisAgent(
     feedback: partial.feedback ?? { pros: [], cons: [], source_url: "" },
     doc_url: "",
   };
-
-  return analysis;
 }

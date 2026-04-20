@@ -1,12 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import Anthropic from "@anthropic-ai/sdk";
 import { verifyNextAuthToken } from "../plugins/auth.js";
 import { companiesRepository } from "../db/repository/companies.js";
 import { conversationsRepository, type Message } from "../db/repository/conversations.js";
 import { expansionCardsRepository } from "../db/repository/expansionCards.js";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import { makeGroqClient, CHAT_MODEL } from "../lib/groq.js";
 
 const chatSchema = z.object({
   question: z.string().min(1).max(500),
@@ -47,19 +45,19 @@ ${JSON.stringify(company.analysis, null, 2)}
 Respond ONLY with valid JSON in this exact format (no preamble, no markdown):
 { "section_key": "one of: ${SECTION_KEYS}", "answer": "your answer here" }`;
 
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
+      const groq = makeGroqClient(request.user.groqApiKey);
+      const response = await groq.chat.completions.create({
+        model: CHAT_MODEL,
         max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: "user", content: question }],
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: question },
+        ],
       });
 
-      const textBlock = response.content.find((b) => b.type === "text");
-      if (!textBlock || textBlock.type !== "text") {
-        return reply.status(500).send({ error: "No response from agent" });
-      }
+      const raw = (response.choices[0]?.message.content ?? "").trim();
+      if (!raw) return reply.status(500).send({ error: "No response from agent" });
 
-      const raw = textBlock.text.trim();
       const jsonStart = raw.indexOf("{");
       const jsonEnd = raw.lastIndexOf("}");
       const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)) as {

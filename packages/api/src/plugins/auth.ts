@@ -9,7 +9,7 @@ import {
 import { hkdfSync } from "crypto";
 import { usersRepository } from "../db/repository/users.js";
 
-type ReqUser = { id: string; email: string };
+type ReqUser = { id: string; email: string; groqApiKey: string | null };
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -104,7 +104,7 @@ async function verifyNextAuthToken(
     avatarUrl: typeof payload.picture === "string" ? payload.picture : null,
   });
 
-  request.user = { id: user.id, email: user.email };
+  request.user = { id: user.id, email: user.email, groqApiKey: user.groqApiKey ?? null };
 }
 
 const authPlugin: FastifyPluginAsync = async (app) => {
